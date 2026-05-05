@@ -1,4 +1,5 @@
 env/
 .env
 files/
-.cache/
+.cache/node_modules/
+.env
