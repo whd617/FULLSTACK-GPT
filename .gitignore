@@ -1,5 +1,6 @@
+node_modules/
+.cache/
+.env
 env/
-.env
 files/
-.cache/node_modules/
-.env
+__pycache__/
