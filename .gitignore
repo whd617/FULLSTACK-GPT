@@ -3,4 +3,5 @@ node_modules/
 .env
 env/
 files/
+.streamlit
 __pycache__/
