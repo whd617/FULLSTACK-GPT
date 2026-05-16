@@ -1,4 +1,3 @@
-from langchain_openai.chat_models import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 import streamlit as st
 from langchain_community.vectorstores import FAISS
@@ -6,12 +5,12 @@ from langchain_classic.storage import LocalFileStore
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_classic.embeddings import CacheBackedEmbeddings
 from langchain_community.document_loaders import UnstructuredFileLoader
-from langchain_openai import OpenAIEmbeddings
+from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.callbacks import BaseCallbackHandler
 
 st.set_page_config(
-    page_title="DocumentGPT",
+    page_title="PrivateGPT",
     page_icon="🤖",
 )
 
@@ -32,8 +31,8 @@ class ChatCallBackHandler(BaseCallbackHandler):
         self.message += token
         self.message_box.markdown(self.message)
 
-llm = ChatOpenAI(
-    model="gpt-5-nano",
+llm = ChatOllama(
+    model="mistral:latest",
     temperature=0.1,
     streaming=True,
     callbacks=[
@@ -51,11 +50,11 @@ llm = ChatOpenAI(
 @st.cache_resource(show_spinner="Embedding file...")
 def embed_file(file):
     file_content = file.read()
-    file_path = f"./.cache/files/{file.name}"
+    file_path = f"./.cache/private_files/{file.name}"
     with open(file_path, "wb") as f:
         f.write(file_content)
 
-    cache_dir = LocalFileStore(f"./.cache/embeddings/{file.name}")
+    cache_dir = LocalFileStore(f"./.cache/private_embeddings/{file.name}")
 
     splitter = CharacterTextSplitter.from_tiktoken_encoder(
         model_name="gpt-5-nano",
@@ -68,7 +67,9 @@ def embed_file(file):
 
     docs = loader.load_and_split(text_splitter=splitter)
 
-    embeddings = OpenAIEmbeddings()
+    embeddings = OllamaEmbeddings(
+        model="mistral:latest"
+    )
 
     cache_embeddings = CacheBackedEmbeddings.from_bytes_store(
         embeddings, cache_dir
@@ -99,26 +100,28 @@ def paint_history():
 def format_docs(docs):
     return "\n\n".join(document.page_content for document in docs)
 
-prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """
-            Answer the question using ONLY the following context.
-            If you don't know the answer, just say you don't know.
-            DON'T make anything up.
+def format_history(messages):
+    return "\n".join(
+        f"{message['role']}: {message['message']}"
+        for message in messages
+    )
 
-            Context: {context}
+prompt = ChatPromptTemplate.from_template(
 
-            Chat history:
-            {history}
-            """,
-        ),
-        ("human", "{question}"),
-    ]
+    """
+    Answer the question using ONLY the following context and not your training data.
+    If you don't know the answer, just say you don't know.
+    DON'T make anything up.
+
+    Context: {context}
+
+    Chat history:
+    {history}
+    Question: {question}
+    """
 )
 
-st.title("DocumentGPT")
+st.title("PrivateGPT")
 
 st.markdown("""
     Welcome!
