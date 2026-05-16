@@ -10,6 +10,31 @@ from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.callbacks import StreamingStdOutCallbackHandler
 from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import BaseOutputParser, StrOutputParser
+
+
+class JsonOutputParser(BaseOutputParser):
+
+    def parse(self, text):
+
+        st.subheader("Raw Text")
+        st.write(text)
+
+        text = text.strip()
+
+        if text.startswith("```json"):
+            text = text.replace("```json", "").replace("```", "").strip()
+
+        elif text.startswith("```"):
+            text = text.replace("```", "").strip()
+
+        st.subheader("Cleaned Text")
+        st.write(text)
+
+        return json.loads(text)
+
+
+output_parser = JsonOutputParser()
 
 
 st.set_page_config(
@@ -32,24 +57,27 @@ def format_docs(docs):
     return "\n\n".join(document.page_content for document in docs)
 
 
-def safe_json_loads(text: str):
-    text = text.strip()
+def detect_language(text: str):
+    for char in text:
+        if "가" <= char <= "힣":
+            return "ko"
+        if "\u3040" <= char <= "\u30ff":
+            return "ja"
+        if "\u4e00" <= char <= "\u9fff":
+            return "zh"
 
-    if text.startswith("```json"):
-        text = text.replace("```json", "").replace("```", "").strip()
-    elif text.startswith("```"):
-        text = text.replace("```", "").strip()
-
-    return json.loads(text)
+    return "en"
 
 
-def search_wikipedia(query: str, limit: int = 5):
+@st.cache_data(show_spinner=False, ttl=3600)
+def search_wikipedia(query: str, limit: int = 3):
     query = query.strip()
 
     if not query:
         return []
 
-    url = "https://en.wikipedia.org/w/api.php"
+    lang = detect_language(query)
+    url = f"https://{lang}.wikipedia.org/w/api.php"
 
     headers = {
         "User-Agent": "QuizGPT/1.0 (Streamlit Study App)"
@@ -73,12 +101,7 @@ def search_wikipedia(query: str, limit: int = 5):
         )
 
         search_response.raise_for_status()
-
-        try:
-            search_data = search_response.json()
-        except requests.exceptions.JSONDecodeError:
-            st.error("Wikipedia 응답을 JSON으로 변환하지 못했습니다.")
-            return []
+        search_data = search_response.json()
 
         search_results = search_data.get("query", {}).get("search", [])
 
@@ -93,7 +116,7 @@ def search_wikipedia(query: str, limit: int = 5):
             if not title:
                 continue
 
-            time.sleep(0.3)
+            time.sleep(0.5)
 
             page_params = {
                 "action": "query",
@@ -113,11 +136,7 @@ def search_wikipedia(query: str, limit: int = 5):
             )
 
             page_response.raise_for_status()
-
-            try:
-                page_data = page_response.json()
-            except requests.exceptions.JSONDecodeError:
-                continue
+            page_data = page_response.json()
 
             pages = page_data.get("query", {}).get("pages", {})
 
@@ -146,6 +165,10 @@ def search_wikipedia(query: str, limit: int = 5):
 
     except requests.exceptions.RequestException as e:
         st.error(f"Wikipedia 요청 중 네트워크 오류가 발생했습니다: {e}")
+        return []
+
+    except json.JSONDecodeError:
+        st.error("Wikipedia 응답을 JSON으로 변환하지 못했습니다.")
         return []
 
 
@@ -180,13 +203,27 @@ Answers: A Roman Emperor(o)|Painter|Actor|Model
 Your turn!
 
 Context: {context}
+
+Language: {language}
+
+Create the quiz in the same language as the language above.
 """,
         )
     ]
 )
 
 
-questions_chain = questions_prompt | llm
+questions_chain = (
+    {
+        "context": format_docs,
+        "language": lambda docs: detect_language(
+            docs[0].page_content
+        ) if docs else "en",
+    }
+    | questions_prompt
+    | llm
+    | StrOutputParser()
+)
 
 
 formatting_prompt = ChatPromptTemplate.from_messages(
@@ -238,7 +275,11 @@ Questions: {context}
 )
 
 
-formatting_chain = formatting_prompt | llm
+formatting_chain = (
+    formatting_prompt
+    | llm
+    | StrOutputParser()
+)
 
 
 @st.cache_data(show_spinner="Loading file...")
@@ -263,9 +304,14 @@ def split_file(file):
     return docs
 
 
-with st.sidebar:
-    docs = None
+if "docs" not in st.session_state:
+    st.session_state["docs"] = None
 
+if "searched_topic" not in st.session_state:
+    st.session_state["searched_topic"] = ""
+
+
+with st.sidebar:
     choice = st.selectbox(
         "Choose what you want to use.",
         (
@@ -281,17 +327,33 @@ with st.sidebar:
         )
 
         if file:
-            docs = split_file(file)
+            st.session_state["docs"] = split_file(file)
 
     else:
         topic = st.text_input("Search Wikipedia...")
+        search = st.button("Search Wikipedia")
 
-        if topic and topic.strip():
-            with st.status("Searching Wikipedia..."):
-                docs = search_wikipedia(topic.strip(), limit=5)
+        if search:
+            current_topic = topic.strip()
 
-                if not docs:
-                    st.error("Wikipedia에서 검색 결과를 찾지 못했습니다.")
+            if not current_topic:
+                st.warning("검색어를 입력하세요.")
+                st.session_state["docs"] = None
+                st.session_state["searched_topic"] = ""
+
+            elif current_topic == st.session_state["searched_topic"]:
+                st.info("이전과 동일한 검색어입니다. 기존 검색 결과를 사용합니다.")
+
+            else:
+                with st.status("Searching Wikipedia..."):
+                    st.session_state["docs"] = search_wikipedia(current_topic, limit=3)
+                    st.session_state["searched_topic"] = current_topic
+
+                    if not st.session_state["docs"]:
+                        st.error("Wikipedia에서 검색 결과를 찾지 못했습니다.")
+
+
+docs = st.session_state["docs"]
 
 
 if not docs:
@@ -309,24 +371,10 @@ else:
     start = st.button("Generate Quiz")
 
     if start:
-        with st.status("Generating questions..."):
-            context = format_docs(docs)
-            questions_response = questions_chain.invoke({"context": context})
+        chain = {"context": questions_chain} | formatting_chain | output_parser
 
-        st.subheader("Generated Questions")
-        st.write(questions_response.content)
-
-        with st.status("Formatting quiz as JSON..."):
-            formatting_response = formatting_chain.invoke(
-                {"context": questions_response.content}
-            )
+        with st.status("Generating Quiz..."):
+            response = chain.invoke(docs)
 
         st.subheader("JSON Output")
-
-        try:
-            quiz_json = safe_json_loads(formatting_response.content)
-            st.json(quiz_json)
-
-        except json.JSONDecodeError:
-            st.warning("JSON 변환에 실패했습니다. 원본 응답을 출력합니다.")
-            st.write(formatting_response.content)
+        st.json(response)
