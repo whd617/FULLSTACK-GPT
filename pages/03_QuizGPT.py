@@ -17,9 +17,6 @@ class JsonOutputParser(BaseOutputParser):
 
     def parse(self, text):
 
-        st.subheader("Raw Text")
-        st.write(text)
-
         text = text.strip()
 
         if text.startswith("```json"):
@@ -27,9 +24,6 @@ class JsonOutputParser(BaseOutputParser):
 
         elif text.startswith("```"):
             text = text.replace("```", "").strip()
-
-        st.subheader("Cleaned Text")
-        st.write(text)
 
         return json.loads(text)
 
@@ -303,12 +297,22 @@ def split_file(file):
 
     return docs
 
+@st.cache_data(show_spinner="Making quiz...")
+def run_quiz_chain(docs, source):
+    chain = (
+        {"context": questions_chain}
+        | formatting_chain
+        | output_parser
+    )
+    return chain.invoke(docs)
+
+
+@st.cache_data(show_spinner="Searching Wikipedia...")
+def wiki_search(_docs, topic):
+    return search_wikipedia(topic, limit=3)
 
 if "docs" not in st.session_state:
     st.session_state["docs"] = None
-
-if "searched_topic" not in st.session_state:
-    st.session_state["searched_topic"] = ""
 
 
 with st.sidebar:
@@ -331,26 +335,15 @@ with st.sidebar:
 
     else:
         topic = st.text_input("Search Wikipedia...")
-        search = st.button("Search Wikipedia")
 
-        if search:
+        if topic:
             current_topic = topic.strip()
 
-            if not current_topic:
-                st.warning("검색어를 입력하세요.")
-                st.session_state["docs"] = None
-                st.session_state["searched_topic"] = ""
-
-            elif current_topic == st.session_state["searched_topic"]:
-                st.info("이전과 동일한 검색어입니다. 기존 검색 결과를 사용합니다.")
-
-            else:
-                with st.status("Searching Wikipedia..."):
-                    st.session_state["docs"] = search_wikipedia(current_topic, limit=3)
-                    st.session_state["searched_topic"] = current_topic
-
-                    if not st.session_state["docs"]:
-                        st.error("Wikipedia에서 검색 결과를 찾지 못했습니다.")
+            st.session_state["docs"] = wiki_search(
+                st.session_state["docs"],
+                current_topic
+            )
+        
 
 
 docs = st.session_state["docs"]
@@ -371,10 +364,9 @@ else:
     start = st.button("Generate Quiz")
 
     if start:
-        chain = {"context": questions_chain} | formatting_chain | output_parser
+        response = run_quiz_chain(
+            docs,
+            topic if topic else file.name
+        )
 
-        with st.status("Generating Quiz..."):
-            response = chain.invoke(docs)
-
-        st.subheader("JSON Output")
-        st.json(response)
+        st.write(response)
