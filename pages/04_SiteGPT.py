@@ -1,6 +1,16 @@
-from langchain_community.document_loaders import AsyncChromiumLoader
-from langchain_community.document_transformers import Html2TextTransformer
+from langchain_community.document_loaders import SitemapLoader
 import streamlit as st
+
+@st.cache_data(show_spinner="Loading website...")
+def load_website(url):
+    loader = SitemapLoader(url,
+                           filter_urls=[
+                               "https://openai.com/index/sora-is-here/"
+                           ])
+    loader.requests_per_second = 5
+    docs = loader.load()
+    st.write(docs)
+    return docs
 
 st.set_page_config(
     page_title="SiteGPT",
@@ -9,8 +19,7 @@ st.set_page_config(
 
 st.title("Quiz GPT")
 
-# 웹사이트의 html 코드를 text로 편환하는 역할
-html2text_transformer = Html2TextTransformer()
+
 
 st.markdown(
     """
@@ -26,7 +35,8 @@ with st.sidebar:
     url = st.text_input("Write down a URL", placeholder="https://example.com")
 
 if url:
-    loader = AsyncChromiumLoader([url])
-    docs = loader.load()
-    transformed = html2text_transformer.transform_documents(docs)
-    st.write(transformed)
+    if ".xml" not in url:
+        with st.sidebar:
+            st.error("Please write down a Sitemap URL")
+    else:
+        docs = load_website(url)
