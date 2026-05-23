@@ -99,6 +99,12 @@ def paint_history():
 def format_docs(docs):
     return "\n\n".join(document.page_content for document in docs)
 
+def format_history(messages):
+    return "\n\n".join(
+        f"{message['role']}: {message['message']}"
+        for message in messages
+    )
+
 prompt = ChatPromptTemplate.from_messages(
     [
         (
