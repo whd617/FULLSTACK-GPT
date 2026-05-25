@@ -5,13 +5,22 @@ import subprocess
 import glob
 import os
 from openai import OpenAI
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import StrOutputParser
+from langchain_community.vectorstores.faiss import FAISS
+from langchain_classic.storage import LocalFileStore
+from langchain_community.document_loaders import UnstructuredFileLoader
+from langchain_classic.embeddings import CacheBackedEmbeddings
 
 has_transcript = os.path.exists("./.cache/files/podcast.txt")
+
+splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+                chunk_size=800,
+                chunk_overlap=100
+            )
 
 llm = ChatOpenAI(
     model= "gpt-5-nano",
@@ -19,6 +28,27 @@ llm = ChatOpenAI(
 )
 
 client = OpenAI()
+
+@st.cache_resource()
+def embed_file(file_path):
+    
+    cache_dir = LocalFileStore(f"./.cache/embeddings/{file.name}")
+
+    loader = TextLoader(file_path)
+
+    docs = loader.load_and_split(text_splitter=splitter)
+
+    embeddings = OpenAIEmbeddings()
+
+    cache_embeddings = CacheBackedEmbeddings.from_bytes_store(
+        embeddings, cache_dir
+    )
+
+    vectorstore = FAISS.from_documents(docs, cache_embeddings)
+
+    retriever = vectorstore.as_retriever() 
+
+    return retriever
 
 @st.cache_data()
 def transcribe_chunks(chunk_folder, destination):
@@ -58,13 +88,11 @@ def cut_audio_in_chunks(audio_path, chunk_size, chunks_folder):
         chunk.export(f"{chunks_folder}/chunk_{i}.mp3", format="mp3")
 
 st.set_page_config(
-    page_title="SiteGPT",
+    page_title="Meeting GPT",
     page_icon="🖥️",
 )
 
-st.title("Quiz GPT")
-
-
+st.title("Meeting GPT")
 
 st.markdown(
     """
@@ -111,17 +139,12 @@ if video:
         if start:
             loader = TextLoader(transcript_path)
 
-            splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-                chunk_size=800,
-                chunk_overlap=100
-            )
-
             docs = loader.load_and_split(text_splitter=splitter)
             first_summary_prompt = ChatPromptTemplate.from_template(
                 """
                     Write a concise summary of the following:
                     "{text}"
-                    CONCISE SUMMARY:
+                    :
                 """
             )
 
@@ -158,4 +181,12 @@ if video:
                         "existing_summary": summary,
                         "context": doc.page_content
                     })
+                    st.write(summary)
             st.write(summary)
+
+    with qu_tab:
+        retriever = embed_file(transcript_path)
+
+        docs = retriever.invoke("do they talk about marcus arelius?")
+
+        st.write(docs)
